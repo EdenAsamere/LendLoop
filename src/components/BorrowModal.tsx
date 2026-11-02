@@ -190,3 +190,4 @@ export function BorrowModal({ tool, onClose, onSuccess }: BorrowModalProps) {
     </div>
   );
 }
+

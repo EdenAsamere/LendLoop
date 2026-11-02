@@ -93,3 +93,4 @@ export function Navbar({ onOpenListModal }: { onOpenListModal?: () => void }) {
     </header>
   );
 }
+

@@ -13,3 +13,4 @@ export declare const internalQuery: QueryBuilder<DataModel, "internal">;
 export declare const internalMutation: MutationBuilder<DataModel, "internal">;
 export declare const internalAction: ActionBuilder<DataModel, "internal">;
 export declare const httpAction: (handler: (ctx: any, request: Request) => Promise<Response>) => HttpEndpoint;
+

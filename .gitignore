@@ -32,3 +32,6 @@ next-env.d.ts
 
 # n8n local data
 .n8n/
+./.env.local
+./.env
+

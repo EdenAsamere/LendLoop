@@ -83,3 +83,4 @@ export default defineSchema({
     channel: v.string(),
   }).index("by_idempotency_key", ["idempotencyKey"]),
 });
+
