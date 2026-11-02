@@ -1,0 +1,300 @@
+{
+  "name": "LendLoop - Borrow Request Notifications",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lendloop-requests",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "id": "1d8bf6ea-d98c-444a-a232-1b1e9596395b"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Security: Validate HMAC Signature and Timestamp Replay Protection\nconst crypto = require('crypto');\n\nconst headers = $input.item.json.headers || {};\nconst rawBody = $input.item.json.body || {};\nconst signatureHeader = headers['x-lendloop-signature'] || '';\nconst timestampHeader = headers['x-lendloop-timestamp'] || '';\nconst secret = $env.N8N_WEBHOOK_SECRET || 'lendloop-secret-key-32chars-minimum!';\n\n// 1. Replay attack verification (5 min tolerance)\nconst now = Date.now();\nconst reqTime = parseInt(timestampHeader, 10);\nif (isNaN(reqTime) || Math.abs(now - reqTime) > 300000) {\n  throw new Error('Unauthorized: Webhook timestamp expired or invalid (replay protection).');\n}\n\n// 2. Compute expected HMAC-SHA256\nconst bodyString = JSON.stringify(rawBody);\nconst expectedSignature = 'sha256=' + crypto\n  .createHmac('sha256', secret)\n  .update(`${timestampHeader}.${bodyString}`)\n  .digest('hex');\n\n// Constant time comparison\nconst sigBuffer = Buffer.from(signatureHeader);\nconst expectedBuffer = Buffer.from(expectedSignature);\nconst isValid = sigBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(sigBuffer, expectedBuffer);\n\nif (!isValid) {\n  throw new Error('Unauthorized: Invalid HMAC signature.');\n}\n\nconst event = rawBody.event;\nconst data = rawBody.data || {};\n\nreturn [{\n  json: {\n    isValid: true,\n    event: event,\n    data: data,\n    receivedAt: now\n  }\n}];"
+      },
+      "name": "Verify HMAC & Replay",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "id": "7ca6fb09-9fc8-48b0-8c29-3b6b15db564b"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.event }}",
+                    "rightValue": "REQUEST_CREATED",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.event }}",
+                    "rightValue": "REQUEST_APPROVED",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.event }}",
+                    "rightValue": "REQUEST_REJECTED",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.event }}",
+                    "rightValue": "REQUEST_RETURNED",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        }
+      },
+      "name": "Route by Event",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [680, 300],
+      "id": "e931ca87-0b16-4c40-9a49-9c59be39e14a"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $json.data;\nreturn [{\n  json: {\n    channel: 'email',\n    recipient: item.ownerEmail,\n    subject: `[LendLoop] New Borrow Request for \"${item.toolName}\"`,\n    bodyText: `Hello ${item.ownerName},\\n\\n${item.borrowerName} has requested to borrow your \"${item.toolName}\" from ${item.startDate} to ${item.endDate}.\\n\\nNotes: ${item.notes || 'None'}\\n\\nPlease visit LendLoop to review and approve this request.`,\n    event: 'REQUEST_CREATED',\n    timestamp: Date.now()\n  }\n}];"
+      },
+      "name": "Format Owner Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 160],
+      "id": "50c37b3e-73cb-4f40-843e-ec6c589b278f"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $json.data;\nreturn [{\n  json: {\n    channel: 'email',\n    recipient: item.borrowerEmail,\n    subject: `[LendLoop] Your Borrow Request for \"${item.toolName}\" was Approved!`,\n    bodyText: `Great news ${item.borrowerName}!\\n\\n${item.ownerName} approved your request for \"${item.toolName}\" (${item.startDate} to ${item.endDate}).\\n\\nPlease coordinate pickup and remember to take good care of the tool!`,\n    event: 'REQUEST_APPROVED',\n    timestamp: Date.now()\n  }\n}];"
+      },
+      "name": "Format Approved Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 280],
+      "id": "3be9dbbb-bb5a-47d3-9bc5-2a2b0235ca24"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $json.data;\nreturn [{\n  json: {\n    channel: 'email',\n    recipient: item.borrowerEmail,\n    subject: `[LendLoop] Update on your request for \"${item.toolName}\"`,\n    bodyText: `Hello ${item.borrowerName},\\n\\nUnfortunately ${item.ownerName} was unable to approve your request for \"${item.toolName}\" at this time.\\n\\nCheck out other available tools on LendLoop!`,\n    event: 'REQUEST_REJECTED',\n    timestamp: Date.now()\n  }\n}];"
+      },
+      "name": "Format Declined Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 400],
+      "id": "119f4561-294b-4fc1-a968-3e4b786f0c08"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $json.data;\nreturn [{\n  json: {\n    channel: 'email',\n    recipient: item.borrowerEmail,\n    subject: `[LendLoop] Return Confirmed for \"${item.toolName}\"`,\n    bodyText: `Hello ${item.borrowerName},\\n\\n${item.ownerName} has marked \"${item.toolName}\" as returned. Thank you for participating in our neighborhood lending loop!`,\n    event: 'REQUEST_RETURNED',\n    timestamp: Date.now()\n  }\n}];"
+      },
+      "name": "Format Returned Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 520],
+      "id": "84a27c0c-8067-4eb5-8e8e-8a9d18728a8d"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Dispatches notification (via Email / Webhook / Structured Console Audit)\nconst payload = $json;\nconsole.log(`[n8n Notification Dispatched] To: ${payload.recipient} | Subject: ${payload.subject}`);\n\nreturn [{\n  json: {\n    status: 'SENT',\n    recipient: payload.recipient,\n    subject: payload.subject,\n    sentAt: Date.now()\n  }\n}];"
+      },
+      "name": "Send Notification (Email/Mock)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1180, 340],
+      "id": "f512720b-4ebc-4ba9-bbf2-520ee03be610"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"message\": \"Notification processed successfully\",\n  \"event\": \"{{ $json.event || 'PROCESSED' }}\"\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1400, 340],
+      "id": "99b9cf6d-8cfd-4886-9040-cfc09f30eeb8"
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Verify HMAC & Replay",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify HMAC & Replay": {
+      "main": [
+        [
+          {
+            "node": "Route by Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Event": {
+      "main": [
+        [
+          {
+            "node": "Format Owner Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Approved Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Declined Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Returned Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Owner Notification": {
+      "main": [
+        [
+          {
+            "node": "Send Notification (Email/Mock)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Approved Notification": {
+      "main": [
+        [
+          {
+            "node": "Send Notification (Email/Mock)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Declined Notification": {
+      "main": [
+        [
+          {
+            "node": "Send Notification (Email/Mock)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Returned Notification": {
+      "main": [
+        [
+          {
+            "node": "Send Notification (Email/Mock)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Notification (Email/Mock)": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

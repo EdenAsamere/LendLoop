@@ -1,0 +1,175 @@
+{
+  "name": "LendLoop - Daily Overdue Reminders",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "name": "Daily at 9:00 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 300],
+      "id": "e2c366ff-6f15-467f-9be3-c820cf065f42"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.CONVEX_SITE_URL || 'http://localhost:3000' }}/api/overdue-loans",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.N8N_API_KEY || 'lendloop-n8n-secret-api-key-2026' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Fetch Overdue Loans from Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300],
+      "id": "5fa75ee0-5a39-4458-aa86-8bceb0a03011"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.item.json;\nconst loans = response.data || [];\nconst todayStr = new Date().toISOString().slice(0, 10);\n\n// Transform each overdue loan into an actionable notification item\nreturn loans.map(loan => {\n  // Deterministic Idempotency Key per loan per day prevents duplicate notifications\n  const idempotencyKey = `overdue_${loan.loanId}_${todayStr}`;\n  \n  return {\n    json: {\n      loanId: loan.loanId,\n      toolId: loan.toolId,\n      toolName: loan.toolName,\n      borrowerName: loan.borrowerName,\n      borrowerEmail: loan.borrowerEmail,\n      ownerName: loan.ownerName,\n      daysOverdue: loan.daysOverdue,\n      startDate: loan.startDate,\n      endDate: loan.endDate,\n      idempotencyKey: idempotencyKey,\n      subject: `[LendLoop Reminder] \"${loan.toolName}\" is ${loan.daysOverdue} day(s) overdue`,\n      message: `Hi ${loan.borrowerName},\\n\\nFriendly neighborhood reminder: the tool \"${loan.toolName}\" borrowed from ${loan.ownerName} was scheduled to be returned on ${loan.endDate}.\\n\\nIt is now ${loan.daysOverdue} day(s) overdue. Please coordinate with ${loan.ownerName} to return the item promptly.`\n    }\n  };\n});"
+      },
+      "name": "Prepare Overdue List & Idempotency",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300],
+      "id": "213d2ec4-54c3-42e1-a20c-7201de3c64c7"
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "name": "Process Each Overdue Loan",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [880, 300],
+      "id": "9bc10ad9-85e6-4fa2-bc40-ebf99dcde995"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $json;\nconsole.log(`[n8n Overdue Reminder Sent] To: ${item.borrowerEmail} | Tool: ${item.toolName} | Overdue: ${item.daysOverdue} days`);\n\nreturn [{\n  json: {\n    ...item,\n    notificationSent: true,\n    sentAt: Date.now()\n  }\n}];"
+      },
+      "name": "Send Overdue Notification (Email/Mock)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 300],
+      "id": "db00f688-e9f0-4fa2-bca4-d4b68ae85526"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CONVEX_SITE_URL || 'http://localhost:3000' }}/api/overdue-reminders/record",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.N8N_API_KEY || 'lendloop-n8n-secret-api-key-2026' }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"loanId\": \"{{ $json.loanId }}\",\n  \"idempotencyKey\": \"{{ $json.idempotencyKey }}\",\n  \"channel\": \"email\",\n  \"sentAt\": {{ $json.sentAt }}\n}",
+        "options": {}
+      },
+      "name": "Idempotent Write-Back to Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1320, 300],
+      "id": "6cb7f98c-859a-4e2b-bbec-9d9fc83e33f3"
+    }
+  ],
+  "connections": {
+    "Daily at 9:00 AM": {
+      "main": [
+        [
+          {
+            "node": "Fetch Overdue Loans from Convex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Overdue Loans from Convex": {
+      "main": [
+        [
+          {
+            "node": "Prepare Overdue List & Idempotency",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Overdue List & Idempotency": {
+      "main": [
+        [
+          {
+            "node": "Process Each Overdue Loan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Each Overdue Loan": {
+      "main": [
+        [
+          {
+            "node": "Send Overdue Notification (Email/Mock)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Overdue Notification (Email/Mock)": {
+      "main": [
+        [
+          {
+            "node": "Idempotent Write-Back to Convex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Idempotent Write-Back to Convex": {
+      "main": [
+        [
+          {
+            "node": "Process Each Overdue Loan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
