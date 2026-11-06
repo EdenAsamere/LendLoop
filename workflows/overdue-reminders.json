@@ -20,15 +20,13 @@
     },
     {
       "parameters": {
-        "url": "={{ $env.CONVEX_SITE_URL || 'http://localhost:3000' }}/api/overdue-loans",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "url": "={{ $env.CONVEX_SITE_URL }}/api/overdue-loans",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Authorization",
-              "value": "=Bearer {{ $env.N8N_API_KEY || 'lendloop-n8n-secret-api-key-2026' }}"
+              "value": "=Bearer {{ $env.N8N_API_KEY }}"
             }
           ]
         },
@@ -74,13 +72,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.CONVEX_SITE_URL || 'http://localhost:3000' }}/api/overdue-reminders/record",
+        "url": "={{ $env.CONVEX_SITE_URL }}/api/overdue-reminders/record",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Authorization",
-              "value": "=Bearer {{ $env.N8N_API_KEY || 'lendloop-n8n-secret-api-key-2026' }}"
+              "value": "=Bearer {{ $env.N8N_API_KEY }}"
             },
             {
               "name": "Content-Type",

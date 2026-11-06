@@ -1,48 +1,36 @@
 "use client";
 
-import { useState } from "react";
-import { useQuery } from "convex/react";
+import { useState, useRef } from "react";
+import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Navbar } from "../components/Navbar";
 import { ToolCard, PublicTool } from "../components/ToolCard";
-import { SignInButton, SignedIn, SignedOut } from "@clerk/nextjs";
+import { BorrowModal } from "../components/BorrowModal";
 import Link from "next/link";
+import { SignedIn, SignedOut, SignInButton, useUser } from "@clerk/nextjs";
 import {
+  SlidersHorizontal,
+  ChevronLeft,
+  ChevronRight,
+  LayoutGrid,
+  Columns,
   Search,
+  X,
+  ArrowUpRight,
   Wrench,
-  ShieldCheck,
-  Leaf,
-  Users,
-  ArrowRight,
-  Filter,
 } from "lucide-react";
-
-const CATEGORIES = [
-  "All",
-  "Power Tools",
-  "Hand Tools",
-  "Gardening",
-  "Woodworking",
-  "Automotive",
-  "Outdoor & Camping",
-  "Cleaning & Maintenance",
-];
-
-// Fallback mock tools for pristine rendering when Convex backend is starting up
-const FALLBACK_PUBLIC_TOOLS: PublicTool[] = [
-  { _id: "1", name: "DeWalt 20V Cordless Drill & Impact Driver", category: "Power Tools", isAvailable: true },
-  { _id: "2", name: "Ryobi Electric Pressure Washer 2000 PSI", category: "Cleaning & Maintenance", isAvailable: true },
-  { _id: "3", name: "Fiskars Telescopic Tree Pruner", category: "Gardening", isAvailable: true },
-  { _id: "4", name: "Bosch Laser Level & Tripod", category: "Power Tools", isAvailable: true },
-  { _id: "5", name: "Craftsman 150-Piece Mechanics Tool Set", category: "Hand Tools", isAvailable: true },
-  { _id: "6", name: "Kreg Pocket-Hole Jig K4 Master System", category: "Woodworking", isAvailable: true },
-  { _id: "7", name: "Coleman 4-Person Instant Cabin Tent", category: "Outdoor & Camping", isAvailable: true },
-  { _id: "8", name: "Automotive OBD2 Bluetooth Diagnostic Scanner", category: "Automotive", isAvailable: true },
-];
+import { ALL_CATEGORIES } from "../lib/constants";
 
 export default function HomePage() {
+  const { user } = useUser();
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
+  const [showFilters, setShowFilters] = useState(false);
+  const [viewMode, setViewMode] = useState<"carousel" | "grid">("carousel");
+  const [activeCardIndex, setActiveCardIndex] = useState(0);
+  const [borrowTool, setBorrowTool] = useState<PublicTool | null>(null);
+
+  const carouselRef = useRef<HTMLDivElement>(null);
 
   // Query Convex public endpoint (enforces strict data-minimization: name and category only!)
   const liveTools = useQuery(api.tools.listPublic, {
@@ -50,194 +38,389 @@ export default function HomePage() {
     search: searchQuery || undefined,
   });
 
-  // Use live tools if loaded; fallback to initial catalog if Convex is initializing
-  const displayedTools: PublicTool[] =
-    liveTools && liveTools.length > 0
-      ? liveTools
-      : FALLBACK_PUBLIC_TOOLS.filter((tool) => {
-          if (selectedCategory !== "All" && tool.category !== selectedCategory) return false;
-          if (searchQuery && !tool.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
-          return true;
-        });
+  const favoriteIds = useQuery(
+    api.favorites.listMyFavoriteToolIds,
+    user?.id ? { clerkId: user.id } : {}
+  );
+  const activeRequestedIds = useQuery(
+    api.requests.myActiveRequestedToolIds,
+    user?.id ? { clerkId: user.id } : {}
+  );
+  const toggleFavorite = useMutation(api.favorites.toggle);
+
+  const handleToggleFavorite = async (toolId: string) => {
+    if (!user) return;
+    try {
+      await toggleFavorite({ toolId: toolId as any, clerkId: user.id });
+    } catch (err: any) {
+      console.error("Failed to toggle favorite:", err);
+    }
+  };
+
+  const isLoading = liveTools === undefined;
+  const displayedTools: PublicTool[] = liveTools || [];
+
+  // Scroll handlers for Bliss carousel navigation
+  const handleScroll = (direction: "left" | "right") => {
+    if (!carouselRef.current) return;
+    const cardWidth = 320; // approximate card width + gap
+    const scrollAmount = direction === "left" ? -cardWidth : cardWidth;
+    carouselRef.current.scrollBy({ left: scrollAmount, behavior: "smooth" });
+
+    // Update active index indicator
+    setActiveCardIndex((prev) => {
+      if (direction === "right") {
+        return Math.min(prev + 1, Math.max(0, displayedTools.length - 1));
+      } else {
+        return Math.max(prev - 1, 0);
+      }
+    });
+  };
+
+  const handleScrollEvent = () => {
+    if (!carouselRef.current) return;
+    const scrollLeft = carouselRef.current.scrollLeft;
+    const cardWidth = 320;
+    const index = Math.round(scrollLeft / cardWidth);
+    setActiveCardIndex(Math.min(index, Math.max(0, displayedTools.length - 1)));
+  };
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50/50">
-      <Navbar />
+    <div className="min-h-screen flex flex-col bg-[#FAF9F6] text-[#181816]">
+      <Navbar
+        selectedCategory={selectedCategory}
+        onSelectCategory={setSelectedCategory}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+      />
 
-      <main className="flex-1">
-        {/* Hero Section */}
-        <section className="relative overflow-hidden bg-gradient-to-b from-brand-50/70 via-white to-slate-50/50 py-16 sm:py-24 border-b border-slate-200/60">
-          <div className="max-w-5xl mx-auto px-4 sm:px-6 text-center">
-            {/* Tagline Pill */}
-            <div className="inline-flex items-center space-x-2 bg-brand-100/80 border border-brand-200/60 px-4 py-1.5 rounded-full text-brand-900 text-xs sm:text-sm font-semibold mb-6 shadow-sm">
-              <span className="w-2 h-2 rounded-full bg-brand-500 animate-pulse" />
-              <span>Neighborhood Tool-Lending Board</span>
-            </div>
+      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+        {/* Breadcrumb Row (Bliss Inspo) */}
+        <div className="flex items-center space-x-2 text-xs text-stone-500 mb-6">
+          <Link href="/" className="hover:text-stone-900 transition">
+            Home
+          </Link>
+          <span>/</span>
+          <span className="text-stone-400">Library</span>
+          <span>/</span>
+          <span className="text-stone-900 font-medium">
+            {selectedCategory === "All" ? "Collection" : selectedCategory}
+          </span>
+        </div>
 
-            {/* Fictional Company Name & Tagline */}
-            <h1 className="text-4xl sm:text-6xl font-black text-slate-900 tracking-tight text-balance">
-              Lend<span className="text-brand-600">Loop</span>
+        {/* Minimalist Editorial Headline (MOSS Inspo) */}
+        <div className="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-6">
+          <div>
+            <h1 className="font-serif text-3xl sm:text-5xl lg:text-6xl font-normal tracking-tight text-[#181816] max-w-3xl leading-[1.1]">
+              DISCOVER TOOLS IN YOUR NEIGHBORHOOD
             </h1>
-            <p className="mt-4 text-xl sm:text-2xl text-slate-700 font-medium max-w-2xl mx-auto text-balance">
-              Borrow what you need. Lend what you don&apos;t.
+            <p className="mt-4 text-stone-600 text-sm sm:text-base max-w-xl font-normal">
+              Borrow what you need. Lend what you don&apos;t. High-grade equipment shared safely with verified neighbors.
             </p>
-            <p className="mt-3 text-sm sm:text-base text-slate-500 max-w-xl mx-auto">
-              Save money, reduce neighborhood clutter, and share high-quality tools with trusted neighbors powered by automated workflows.
-            </p>
-
-            {/* CTAs */}
-            <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
-              <SignedOut>
-                <SignInButton mode="modal">
-                  <button className="w-full sm:w-auto inline-flex items-center justify-center space-x-2 bg-brand-600 hover:bg-brand-700 text-white font-semibold text-base px-6 py-3.5 rounded-2xl shadow-lg shadow-brand-600/20 hover:shadow-xl transition">
-                    <span>Sign in to lend or borrow</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </button>
-                </SignInButton>
-              </SignedOut>
-
-              <SignedIn>
-                <Link
-                  href="/dashboard"
-                  className="w-full sm:w-auto inline-flex items-center justify-center space-x-2 bg-brand-600 hover:bg-brand-700 text-white font-semibold text-base px-6 py-3.5 rounded-2xl shadow-lg shadow-brand-600/20 hover:shadow-xl transition"
-                >
-                  <span>Go to My Dashboard</span>
-                  <ArrowRight className="w-4 h-4" />
-                </Link>
-              </SignedIn>
-
-              <a
-                href="#tools"
-                className="w-full sm:w-auto inline-flex items-center justify-center px-6 py-3.5 text-sm font-semibold text-slate-700 bg-white hover:bg-slate-100 rounded-2xl border border-slate-200 transition"
-              >
-                Browse Available Tools
-              </a>
-            </div>
-
-            {/* Trust Badges */}
-            <div className="mt-12 grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-3xl mx-auto text-left">
-              <div className="bg-white/80 backdrop-blur p-4 rounded-2xl border border-slate-200/80 shadow-sm flex items-start space-x-3">
-                <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
-                  <Leaf className="w-5 h-5" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-slate-900">Zero Waste</h4>
-                  <p className="text-[11px] text-slate-500 mt-0.5">
-                    Why buy a drill used 12 minutes a year? Share locally.
-                  </p>
-                </div>
-              </div>
-
-              <div className="bg-white/80 backdrop-blur p-4 rounded-2xl border border-slate-200/80 shadow-sm flex items-start space-x-3">
-                <div className="w-9 h-9 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
-                  <ShieldCheck className="w-5 h-5" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-slate-900">Data-Minimized</h4>
-                  <p className="text-[11px] text-slate-500 mt-0.5">
-                    Public listings expose only tool name and category.
-                  </p>
-                </div>
-              </div>
-
-              <div className="bg-white/80 backdrop-blur p-4 rounded-2xl border border-slate-200/80 shadow-sm flex items-start space-x-3">
-                <div className="w-9 h-9 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center shrink-0">
-                  <Users className="w-5 h-5" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-slate-900">n8n Automation</h4>
-                  <p className="text-[11px] text-slate-500 mt-0.5">
-                    Automated request alerts & daily overdue reminders.
-                  </p>
-                </div>
-              </div>
-            </div>
           </div>
-        </section>
 
-        {/* Public Tool Catalog Section */}
-        <section id="tools" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
-            <div>
-              <div className="inline-flex items-center space-x-1.5 text-xs font-semibold text-brand-700 bg-brand-50 px-3 py-1 rounded-full mb-2">
-                <Wrench className="w-3.5 h-3.5" />
-                <span>Public Inventory</span>
-              </div>
-              <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
-                Available Neighborhood Tools
-              </h2>
-              <p className="text-xs sm:text-sm text-slate-500 mt-1">
-                Read-only view showing tool names and categories. Sign in to view owner details and submit a borrow request.
-              </p>
+          <div className="flex items-center gap-2 shrink-0">
+            <SignedIn>
+              <Link
+                href="/dashboard"
+                className="inline-flex items-center gap-2 bg-[#181816] hover:bg-black text-white text-xs font-semibold px-5 py-3 rounded-full shadow-sm hover:shadow transition"
+              >
+                <span>Explore Dashboard</span>
+                <ArrowUpRight className="w-3.5 h-3.5" />
+              </Link>
+            </SignedIn>
+            <SignedOut>
+              <SignInButton mode="modal">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 bg-[#181816] hover:bg-black text-white text-xs font-semibold px-5 py-3 rounded-full shadow-sm hover:shadow transition"
+                >
+                  <span>Explore Dashboard</span>
+                  <ArrowUpRight className="w-3.5 h-3.5" />
+                </button>
+              </SignInButton>
+            </SignedOut>
+          </div>
+        </div>
+
+        {/* Secondary Subcategory / Filter Row (Bliss Inspo) */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#EAE8E2] pb-4 mb-8">
+          {/* Category Tabs with active indicator dot (like Bliss "New collection •") */}
+          {/* Category Tabs with active indicator dot (like Bliss "New collection •") */}
+          <div className="flex items-center space-x-6 overflow-x-auto no-scrollbar py-1">
+            {ALL_CATEGORIES.map((cat) => {
+              const isActive = selectedCategory === cat;
+              return (
+                <button
+                  key={cat}
+                  onClick={() => setSelectedCategory(cat)}
+                  className={`text-xs sm:text-sm font-medium whitespace-nowrap transition-colors relative py-1 flex flex-col items-center ${
+                    isActive ? "text-[#181816] font-semibold" : "text-stone-500 hover:text-stone-800"
+                  }`}
+                >
+                  <span>{cat}</span>
+                  {isActive && (
+                    <span className="w-1 h-1 rounded-full bg-[#181816] mt-1" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Right Action Controls: View switcher & Bliss Filter pill */}
+          <div className="flex items-center space-x-3 shrink-0 self-end sm:self-auto">
+            {/* View Mode Switcher */}
+            <div className="hidden sm:flex items-center space-x-1 border border-[#EAE8E2] rounded-full p-1 bg-[#F3F1EC]">
+              <button
+                onClick={() => setViewMode("carousel")}
+                className={`p-1.5 rounded-full transition ${
+                  viewMode === "carousel"
+                    ? "bg-white text-stone-900 shadow-xs"
+                    : "text-stone-400 hover:text-stone-700"
+                }`}
+                title="Carousel View"
+              >
+                <Columns className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => setViewMode("grid")}
+                className={`p-1.5 rounded-full transition ${
+                  viewMode === "grid"
+                    ? "bg-white text-stone-900 shadow-xs"
+                    : "text-stone-400 hover:text-stone-700"
+                }`}
+                title="Grid View"
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+              </button>
             </div>
 
-            {/* Search Input */}
-            <div className="relative w-full md:w-72">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+            {/* Bliss Black Filter Pill Button */}
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className={`inline-flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-full transition ${
+                showFilters
+                  ? "bg-[#181816] text-white"
+                  : "bg-[#181816] hover:bg-black text-white shadow-sm"
+              }`}
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              <span>Filters</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Collapsible Filter Bar */}
+        {showFilters && (
+          <div className="mb-8 p-4 rounded-2xl bg-[#F3F1EC] border border-[#EAE8E2] flex flex-col sm:flex-row items-center justify-between gap-4 animate-fade-in">
+            <div className="relative w-full sm:w-80">
+              <Search className="w-4 h-4 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search tools by name..."
-                className="w-full text-xs pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 bg-white text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500 shadow-sm"
+                className="w-full text-xs pl-10 pr-4 py-2.5 rounded-full border border-[#EAE8E2] bg-white text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-900"
               />
             </div>
-          </div>
 
-          {/* Category Filter Pills */}
-          <div className="flex items-center space-x-2 overflow-x-auto pb-4 mb-6 scrollbar-none">
-            <span className="text-xs font-semibold text-slate-400 flex items-center gap-1 shrink-0 pl-1">
-              <Filter className="w-3.5 h-3.5" /> Category:
-            </span>
-            {CATEGORIES.map((cat) => (
-              <button
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`text-xs font-medium px-3.5 py-1.5 rounded-full shrink-0 transition ${
-                  selectedCategory === cat
-                    ? "bg-slate-900 text-white shadow-sm"
-                    : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
-
-          {/* Tools Grid (Data-Minimized Public View) */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-            {displayedTools.map((tool) => (
-              <ToolCard key={tool._id} tool={tool} isPublicOnly={true} />
-            ))}
-          </div>
-
-          {displayedTools.length === 0 && (
-            <div className="text-center py-12 bg-white rounded-2xl border border-slate-200 p-8">
-              <Wrench className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-              <h3 className="text-sm font-bold text-slate-800">No tools found</h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Try selecting a different category or clearing your search.
-              </p>
+            <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  className="inline-flex items-center gap-1 text-xs text-stone-500 hover:text-stone-800 px-3 py-1.5 rounded-full bg-white border border-[#EAE8E2]"
+                >
+                  <X className="w-3 h-3" />
+                  <span>Clear Search</span>
+                </button>
+              )}
+              <span className="text-xs text-stone-500">
+                Showing {displayedTools.length} {displayedTools.length === 1 ? "tool" : "tools"}
+              </span>
             </div>
-          )}
-        </section>
+          </div>
+        )}
+
+        {/* LOADING SKELETONS */}
+        {isLoading ? (
+          <div className="flex items-stretch gap-6 overflow-hidden pb-6">
+            {[1, 2, 3, 4, 5].map((i) => (
+              <div
+                key={i}
+                className="w-[270px] sm:w-[300px] lg:w-[320px] shrink-0 animate-pulse"
+              >
+                <div className="aspect-[3/4.2] sm:aspect-[3/4.4] w-full rounded-[2.2rem] bg-[#ECEAE3]" />
+                <div className="mt-3.5 flex items-center justify-between gap-2 px-1">
+                  <div className="w-24 h-8 rounded-full bg-[#ECEAE3]" />
+                  <div className="w-20 h-8 rounded-full bg-[#ECEAE3]" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : viewMode === "carousel" ? (
+          /* CAROUSEL VIEW (Bliss 5-Card Layout) */
+          <div className="relative">
+            <div
+              ref={carouselRef}
+              onScroll={handleScrollEvent}
+              className="flex items-stretch gap-6 overflow-x-auto no-scrollbar pb-6 scroll-smooth snap-x snap-mandatory"
+            >
+              {displayedTools.map((tool) => (
+                <div
+                  key={tool._id}
+                  className="w-[270px] sm:w-[300px] lg:w-[320px] shrink-0 snap-start"
+                >
+                  <ToolCard
+                    tool={tool}
+                    isPublicOnly={true}
+                    onRequestBorrow={(t) => setBorrowTool(t)}
+                    isFavorited={favoriteIds?.includes(tool._id as any)}
+                    onToggleFavorite={handleToggleFavorite}
+                    hasPendingRequest={activeRequestedIds?.includes(tool._id as any)}
+                  />
+                </div>
+              ))}
+            </div>
+
+            {displayedTools.length === 0 && (
+              <div className="text-center py-20 bg-white rounded-[2rem] border border-[#EAE8E2] p-8 max-w-md mx-auto">
+                <div className="w-12 h-12 rounded-full bg-[#F3F1EC] flex items-center justify-center mx-auto mb-3 text-stone-500">
+                  <Wrench className="w-5 h-5" />
+                </div>
+                <h3 className="font-serif text-lg font-bold text-stone-900">No tools found</h3>
+                <p className="text-xs text-stone-500 mt-1 mb-5">
+                  {searchQuery
+                    ? `No equipment matching "${searchQuery}".`
+                    : selectedCategory !== "All"
+                    ? `No tools currently listed under "${selectedCategory}".`
+                    : "The neighborhood tool catalog is currently empty. Be the first to share!"}
+                </p>
+                <Link
+                  href="/dashboard"
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-5 py-2.5 rounded-full text-white bg-[#181816] hover:bg-black transition shadow-sm"
+                >
+                  <span>List a Tool</span>
+                  <ArrowUpRight className="w-3.5 h-3.5" />
+                </Link>
+              </div>
+            )}
+
+            {/* Bliss Bottom Controls: Index Counter (1/5) & Navigation Arrows */}
+            {displayedTools.length > 0 && (
+              <div className="flex items-center justify-between mt-8 pt-4 border-t border-[#EAE8E2]">
+                <div className="text-sm font-medium text-stone-600 tracking-wider">
+                  {Math.min(activeCardIndex + 1, displayedTools.length)} / {displayedTools.length}
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => handleScroll("left")}
+                    className="w-10 h-10 rounded-full border border-[#EAE8E2] bg-white hover:bg-stone-100 flex items-center justify-center text-stone-700 transition active:scale-95 shadow-xs"
+                    aria-label="Previous items"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => handleScroll("right")}
+                    className="w-10 h-10 rounded-full border border-[#EAE8E2] bg-white hover:bg-stone-100 flex items-center justify-center text-stone-700 transition active:scale-95 shadow-xs"
+                    aria-label="Next items"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          /* GRID VIEW */
+          <div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+              {displayedTools.map((tool) => (
+                <ToolCard
+                  key={tool._id}
+                  tool={tool}
+                  isPublicOnly={true}
+                  onRequestBorrow={(t) => setBorrowTool(t)}
+                  isFavorited={favoriteIds?.includes(tool._id as any)}
+                  onToggleFavorite={handleToggleFavorite}
+                  hasPendingRequest={activeRequestedIds?.includes(tool._id as any)}
+                />
+              ))}
+            </div>
+
+            {displayedTools.length === 0 && (
+              <div className="text-center py-20 bg-white rounded-[2rem] border border-[#EAE8E2] p-8 max-w-md mx-auto">
+                <div className="w-12 h-12 rounded-full bg-[#F3F1EC] flex items-center justify-center mx-auto mb-3 text-stone-500">
+                  <Wrench className="w-5 h-5" />
+                </div>
+                <h3 className="font-serif text-lg font-bold text-stone-900">No tools found</h3>
+                <p className="text-xs text-stone-500 mt-1 mb-5">
+                  {searchQuery
+                    ? `No equipment matching "${searchQuery}".`
+                    : selectedCategory !== "All"
+                    ? `No tools currently listed under "${selectedCategory}".`
+                    : "The neighborhood tool catalog is currently empty. Be the first to share!"}
+                </p>
+                <SignedIn>
+                  <Link
+                    href="/dashboard"
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold px-5 py-2.5 rounded-full text-white bg-[#181816] hover:bg-black transition shadow-sm"
+                  >
+                    <span>List a Tool</span>
+                    <ArrowUpRight className="w-3.5 h-3.5" />
+                  </Link>
+                </SignedIn>
+                <SignedOut>
+                  <SignInButton mode="modal">
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold px-5 py-2.5 rounded-full text-white bg-[#181816] hover:bg-black transition shadow-sm"
+                    >
+                      <span>List a Tool</span>
+                      <ArrowUpRight className="w-3.5 h-3.5" />
+                    </button>
+                  </SignInButton>
+                </SignedOut>
+              </div>
+            )}
+          </div>
+        )}
       </main>
 
-      {/* Footer */}
-      <footer className="bg-white border-t border-slate-200 py-8">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
+      {/* Editorial Footer */}
+      <footer className="mt-16 border-t border-[#EAE8E2] py-10 bg-[#FAF9F6]">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-stone-500">
           <div className="flex items-center space-x-2">
-            <span className="font-extrabold text-slate-900">
-              Lend<span className="text-brand-600">Loop</span>
+            <span className="font-serif font-bold text-[#181816] text-base">
+              Lend<span className="italic font-normal">Loop</span>
             </span>
-            <span>&bull; Neighborhood Tool-Lending Board</span>
+            <span>&bull;</span>
+            <span>Neighborhood Tool Library</span>
           </div>
-          <div>
-            Built with Next.js (App Router), Clerk, Convex &amp; n8n
+
+          <div className="flex items-center space-x-6">
+            <Link href="/" className="hover:text-stone-900 transition">
+              Catalog
+            </Link>
+            <Link href="/dashboard" className="hover:text-stone-900 transition">
+              Dashboard
+            </Link>
+            <span>&copy; {new Date().getFullYear()} LendLoop Inc.</span>
           </div>
         </div>
       </footer>
+
+      {/* Direct Borrow Modal on Catalog */}
+      {borrowTool && (
+        <BorrowModal
+          tool={borrowTool}
+          onClose={() => setBorrowTool(null)}
+          onSuccess={() => setBorrowTool(null)}
+        />
+      )}
     </div>
   );
 }
+
+
 

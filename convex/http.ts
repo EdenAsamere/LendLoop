@@ -4,14 +4,22 @@ import { api, internal } from "./_generated/api";
 
 const http = httpRouter();
 
-// Helper to authenticate n8n HTTP requests
+// Helper to authenticate n8n HTTP requests with constant-time comparison (OWASP A02)
 function verifyN8nAuth(request: Request): boolean {
   const authHeader = request.headers.get("Authorization");
-  const expectedKey = process.env.N8N_API_KEY || "lendloop-n8n-secret-api-key-2026";
-  if (!authHeader) return false;
+  const expectedKey = process.env.N8N_API_KEY;
+  if (!authHeader || !expectedKey) return false;
 
   const [scheme, token] = authHeader.split(" ");
-  return scheme === "Bearer" && token === expectedKey;
+  if (scheme !== "Bearer" || !token) return false;
+
+  // Constant-time byte-level comparison to mitigate timing attacks
+  if (token.length !== expectedKey.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < token.length; i++) {
+    mismatch |= token.charCodeAt(i) ^ expectedKey.charCodeAt(i);
+  }
+  return mismatch === 0;
 }
 
 // GET /api/overdue-loans

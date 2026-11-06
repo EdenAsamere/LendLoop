@@ -1,6 +1,6 @@
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { requireAuthUser } from "./users";
+import { requireAuthUser, requireModeratorOrAdmin } from "./authUtils";
 
 // Admin Query: View all loans / requests across the platform
 export const listAllLoans = query({
@@ -8,7 +8,7 @@ export const listAllLoans = query({
   handler: async (ctx) => {
     const auth = await requireAuthUser(ctx);
     if (!auth.user || auth.user.role !== "admin") {
-      throw new Error("Forbidden: Admin privileges required.");
+      throw new ConvexError("Forbidden: Admin privileges required.");
     }
 
     const loans = await ctx.db.query("borrowRequests").order("desc").collect();
@@ -41,23 +41,19 @@ export const listAllUsers = query({
   handler: async (ctx) => {
     const auth = await requireAuthUser(ctx);
     if (!auth.user || auth.user.role !== "admin") {
-      throw new Error("Forbidden: Admin privileges required.");
+      throw new ConvexError("Forbidden: Admin privileges required.");
     }
 
     return await ctx.db.query("users").order("desc").collect();
   },
 });
 
-// Admin Query: View audit logs
+// Compliance & Audit Query: View audit logs (RBAC: Moderator or Admin)
 export const listAuditLogs = query({
-  args: { limit: v.optional(v.number()) },
+  args: { limit: v.optional(v.number()), clerkId: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    const auth = await requireAuthUser(ctx);
-    if (!auth.user || auth.user.role !== "admin") {
-      throw new Error("Forbidden: Admin privileges required.");
-    }
-
-    const limit = args.limit || 50;
+    await requireModeratorOrAdmin(ctx, args.clerkId);
+    const limit = Math.min(args.limit || 50, 200);
     return await ctx.db.query("auditLogs").order("desc").take(limit);
   },
 });
@@ -128,7 +124,7 @@ export const recordOverdueReminderInternal = mutation({
     }
 
     const loan = await ctx.db.get(args.loanId);
-    if (!loan) throw new Error("Loan not found");
+    if (!loan) throw new ConvexError("Loan not found");
 
     // 2. Insert into remindersLog
     const reminderId = await ctx.db.insert("remindersLog", {

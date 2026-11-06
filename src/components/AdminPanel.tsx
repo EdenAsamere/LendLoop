@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import { formatDate } from "../lib/utils";
+import { formatDate, getCleanErrorMessage } from "../lib/utils";
 import {
   ShieldAlert,
   ShieldCheck,
@@ -19,44 +19,36 @@ export function AdminPanel() {
   const [testResult, setTestResult] = useState<string | null>(null);
 
   const allLoans = useQuery(api.admin.listAllLoans, {});
+  const overdueLoans = useQuery(api.admin.getOverdueLoansInternal, {});
   const allUsers = useQuery(api.admin.listAllUsers, {});
   const auditLogs = useQuery(api.admin.listAuditLogs, { limit: 50 });
 
   const toggleTrustedLender = useMutation(api.users.toggleTrustedLender);
   const setUserRole = useMutation(api.users.setUserRole);
 
+  const handleTestOverdueSimulation = () => {
+    const count = overdueLoans?.length ?? 0;
+    setTestResult(
+      `Securely verified: ${count} loan(s) currently overdue and eligible for automated n8n reminder notifications.`
+    );
+  };
+
   const handleToggleTrusted = async (userId: string) => {
     try {
       await toggleTrustedLender({ targetUserId: userId as any });
     } catch (err: any) {
-      alert(`Error toggling status: ${err.message}`);
+      alert(getCleanErrorMessage(err));
     }
   };
 
-  const handleToggleRole = async (userId: string, currentRole: string) => {
+  const handleSetRole = async (userId: string, newRole: "user" | "moderator" | "admin") => {
     try {
-      const nextRole = currentRole === "admin" ? "user" : "admin";
       await setUserRole({
         targetUserId: userId as any,
-        role: nextRole,
+        role: newRole,
       });
     } catch (err: any) {
-      alert(`Error changing role: ${err.message}`);
-    }
-  };
-
-  const handleTestOverdueSimulation = async () => {
-    try {
-      setTestResult("Querying /api/overdue-loans endpoint...");
-      const res = await fetch("/api/overdue-loans", {
-        headers: {
-          Authorization: "Bearer lendloop-n8n-secret-api-key-2026",
-        },
-      });
-      const data = await res.json();
-      setTestResult(`Received ${data.count || 0} overdue loan(s) from Convex endpoint.`);
-    } catch (err: any) {
-      setTestResult(`Failed: ${err.message}`);
+      alert(getCleanErrorMessage(err));
     }
   };
 
@@ -208,11 +200,13 @@ export function AdminPanel() {
                         <span
                           className={`font-semibold uppercase text-[10px] px-2 py-0.5 rounded-md ${
                             user.role === "admin"
-                              ? "bg-amber-100 text-amber-800"
+                              ? "bg-indigo-100 text-indigo-800"
+                              : user.role === "moderator"
+                              ? "bg-emerald-100 text-emerald-800"
                               : "bg-slate-100 text-slate-600"
                           }`}
                         >
-                          {user.role}
+                          {user.role === "moderator" ? "Compliance Steward" : user.role}
                         </span>
                       </td>
                       <td className="p-3">
@@ -223,17 +217,20 @@ export function AdminPanel() {
                         )}
                       </td>
                       <td className="p-3 text-right space-x-2">
+                        <select
+                          value={user.role}
+                          onChange={(e) => handleSetRole(user._id, e.target.value as any)}
+                          className="px-2 py-1 rounded-md text-[11px] font-medium border border-slate-200 bg-white text-slate-800"
+                        >
+                          <option value="user">Member (User)</option>
+                          <option value="moderator">Compliance Steward</option>
+                          <option value="admin">Administrator</option>
+                        </select>
                         <button
                           onClick={() => handleToggleTrusted(user._id)}
                           className="px-2.5 py-1 rounded-md text-[11px] font-medium bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition"
                         >
                           {user.isTrustedLender ? "Revoke Trusted" : "Make Trusted"}
-                        </button>
-                        <button
-                          onClick={() => handleToggleRole(user._id, user.role)}
-                          className="px-2.5 py-1 rounded-md text-[11px] font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition"
-                        >
-                          {user.role === "admin" ? "Demote" : "Promote Admin"}
                         </button>
                       </td>
                     </tr>

@@ -7,8 +7,9 @@ export default defineSchema({
     name: v.string(),
     email: v.string(),
     imageUrl: v.optional(v.string()),
-    role: v.union(v.literal("user"), v.literal("admin")),
+    role: v.union(v.literal("user"), v.literal("moderator"), v.literal("admin")),
     isTrustedLender: v.boolean(),
+    mustChangePassword: v.optional(v.boolean()),
     createdAt: v.number(),
   })
     .index("by_clerk_id", ["clerkId"])
@@ -28,12 +29,21 @@ export default defineSchema({
     ownerId: v.id("users"),
     ownerClerkId: v.string(),
     isAvailable: v.boolean(),
+    // Regulatory & Safety Compliance Fields (Managed by Moderator / Compliance Steward)
+    isCertified: v.optional(v.boolean()),
+    certifiedBy: v.optional(v.string()),
+    certifiedAt: v.optional(v.number()),
+    safetyNotes: v.optional(v.string()),
+    isFlagged: v.optional(v.boolean()),
+    flagReason: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_ownerId", ["ownerId"])
     .index("by_ownerClerkId", ["ownerClerkId"])
     .index("by_category", ["category"])
-    .index("by_isAvailable", ["isAvailable"]),
+    .index("by_isAvailable", ["isAvailable"])
+    .index("by_isCertified", ["isCertified"])
+    .index("by_isFlagged", ["isFlagged"]),
 
   borrowRequests: defineTable({
     toolId: v.id("tools"),
@@ -71,8 +81,11 @@ export default defineSchema({
   auditLogs: defineTable({
     action: v.string(),
     actorClerkId: v.optional(v.string()),
+    actorRole: v.optional(v.string()),
     targetId: v.optional(v.string()),
+    targetType: v.optional(v.string()),
     details: v.string(),
+    metadata: v.optional(v.string()),
     timestamp: v.number(),
   }).index("by_action", ["action"]),
 
@@ -82,5 +95,15 @@ export default defineSchema({
     sentAt: v.number(),
     channel: v.string(),
   }).index("by_idempotency_key", ["idempotencyKey"]),
+
+  favorites: defineTable({
+    userId: v.id("users"),
+    userClerkId: v.string(),
+    toolId: v.id("tools"),
+    createdAt: v.number(),
+  })
+    .index("by_userClerkId", ["userClerkId"])
+    .index("by_user_tool", ["userClerkId", "toolId"])
+    .index("by_toolId", ["toolId"]),
 });
 

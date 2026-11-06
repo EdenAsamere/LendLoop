@@ -11,7 +11,12 @@ export const dispatchWebhook = internalAction({
   },
   handler: async (ctx, args) => {
     const webhookUrl = process.env.N8N_WEBHOOK_URL;
-    const webhookSecret = process.env.N8N_WEBHOOK_SECRET || "lendloop-secret-key-32chars-minimum!";
+    const webhookSecret = process.env.N8N_WEBHOOK_SECRET;
+
+    if (!webhookSecret) {
+      console.warn("[Webhook Dispatcher] N8N_WEBHOOK_SECRET not configured. Skipping webhook dispatch.");
+      return { success: false, error: "Missing webhook secret" };
+    }
 
     const timestamp = Date.now().toString();
     const bodyString = JSON.stringify({
@@ -26,8 +31,6 @@ export const dispatchWebhook = internalAction({
       .update(`${timestamp}.${bodyString}`)
       .digest("hex");
 
-    console.log(`[Webhook Dispatcher] Event: ${args.event}, Signature: sha256=${signature}`);
-
     if (!webhookUrl) {
       console.warn("[Webhook Dispatcher] N8N_WEBHOOK_URL not configured. Simulating delivery.");
       return {
@@ -36,6 +39,18 @@ export const dispatchWebhook = internalAction({
         event: args.event,
         signature: `sha256=${signature}`,
       };
+    }
+
+    // SSRF Mitigation (OWASP A10): Strictly validate webhook URL scheme
+    try {
+      const parsedUrl = new URL(webhookUrl);
+      if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+        console.error(`[Webhook Dispatcher] Invalid webhook scheme: ${parsedUrl.protocol}`);
+        return { success: false, error: "Invalid webhook URL protocol" };
+      }
+    } catch {
+      console.error("[Webhook Dispatcher] Malformed webhook URL.");
+      return { success: false, error: "Malformed webhook URL" };
     }
 
     try {

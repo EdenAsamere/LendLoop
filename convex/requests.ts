@@ -1,7 +1,7 @@
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { requireAuthUser } from "./users";
+import { requireAuthUser } from "./authUtils";
 
 // Create a borrow request
 export const create = mutation({
@@ -10,34 +10,76 @@ export const create = mutation({
     startDate: v.string(), // YYYY-MM-DD
     endDate: v.string(),   // YYYY-MM-DD
     notes: v.optional(v.string()),
+    clerkId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const auth = await requireAuthUser(ctx);
-    if (!auth.user) throw new Error("User record not found.");
+    const auth = await requireAuthUser(ctx, args.clerkId);
+    if (!auth.user) throw new ConvexError("User record not found. Please sign in.");
 
     const tool = await ctx.db.get(args.toolId);
-    if (!tool) throw new Error("Tool not found.");
+    if (!tool) throw new ConvexError("Tool not found.");
 
     if (tool.ownerClerkId === auth.identity.subject) {
-      throw new Error("You cannot borrow your own tool.");
+      throw new ConvexError("You cannot borrow your own tool.");
+    }
+
+    // Prevent duplicate active or pending borrow requests for the same tool by the same individual
+    const existingActiveRequests = await ctx.db
+      .query("borrowRequests")
+      .withIndex("by_borrowerClerkId", (q) =>
+        q.eq("borrowerClerkId", auth.identity.subject)
+      )
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("toolId"), args.toolId),
+          q.or(
+            q.eq(q.field("status"), "pending"),
+            q.eq(q.field("status"), "approved")
+          )
+        )
+      )
+      .collect();
+
+    if (existingActiveRequests.length > 0) {
+      const activeReq = existingActiveRequests[0];
+      if (activeReq.status === "pending") {
+        throw new ConvexError(
+          "You already have a pending borrow request for this item. Please wait for the owner to respond."
+        );
+      } else {
+        throw new ConvexError(
+          "You already have an active approved loan for this item."
+        );
+      }
     }
 
     if (!tool.isAvailable) {
-      throw new Error("This tool is currently not available for borrowing.");
+      throw new ConvexError("This tool is currently not available for borrowing.");
     }
 
-    // Validate dates
+    // Validate dates and limits
     const start = new Date(args.startDate);
     const end = new Date(args.endDate);
     if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-      throw new Error("Invalid date format. Expected YYYY-MM-DD.");
+      throw new ConvexError("Invalid date format. Expected YYYY-MM-DD.");
     }
     if (end < start) {
-      throw new Error("Return date cannot be earlier than start date.");
+      throw new ConvexError("Return date cannot be earlier than start date.");
+    }
+
+    // Limit loan duration to 180 days to prevent indefinite resource lock
+    const durationDays = (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24);
+    if (durationDays > 180) {
+      throw new ConvexError("Loan duration cannot exceed 180 days.");
+    }
+
+    const trimmedNotes = args.notes?.trim();
+    if (trimmedNotes && trimmedNotes.length > 1000) {
+      throw new ConvexError("Notes cannot exceed 1000 characters.");
     }
 
     const owner = await ctx.db.get(tool.ownerId);
-    if (!owner) throw new Error("Tool owner record not found.");
+    if (!owner) throw new ConvexError("Tool owner record not found.");
 
     const requestId = await ctx.db.insert("borrowRequests", {
       toolId: args.toolId,
@@ -52,7 +94,7 @@ export const create = mutation({
       startDate: args.startDate,
       endDate: args.endDate,
       status: "pending",
-      notes: args.notes?.trim(),
+      notes: trimmedNotes,
       createdAt: Date.now(),
     });
 
@@ -76,7 +118,7 @@ export const create = mutation({
         ownerEmail: owner.email,
         startDate: args.startDate,
         endDate: args.endDate,
-        notes: args.notes,
+        notes: trimmedNotes,
       },
     });
 
@@ -94,14 +136,15 @@ export const updateStatus = mutation({
       v.literal("returned"),
       v.literal("cancelled")
     ),
+    clerkId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const auth = await requireAuthUser(ctx);
+    const auth = await requireAuthUser(ctx, args.clerkId);
     const request = await ctx.db.get(args.requestId);
-    if (!request) throw new Error("Borrow request not found.");
+    if (!request) throw new ConvexError("Borrow request not found.");
 
     const tool = await ctx.db.get(request.toolId);
-    if (!tool) throw new Error("Associated tool not found.");
+    if (!tool) throw new ConvexError("Associated tool not found.");
 
     const isOwner = request.ownerClerkId === auth.identity.subject;
     const isBorrower = request.borrowerClerkId === auth.identity.subject;
@@ -110,24 +153,24 @@ export const updateStatus = mutation({
     // RBAC Authorization Matrix
     if (args.status === "cancelled") {
       if (!isBorrower && !isAdmin) {
-        throw new Error("Forbidden: Only the borrower can cancel their request.");
+        throw new ConvexError("Forbidden: Only the borrower can cancel their request.");
       }
       if (request.status !== "pending") {
-        throw new Error("Only pending requests can be cancelled.");
+        throw new ConvexError("Only pending requests can be cancelled.");
       }
     } else if (args.status === "approved" || args.status === "rejected") {
       if (!isOwner && !isAdmin) {
-        throw new Error("Forbidden: Only the tool owner or admin can approve/reject this request.");
+        throw new ConvexError("Forbidden: Only the tool owner or admin can approve/reject this request.");
       }
       if (request.status !== "pending") {
-        throw new Error(`Cannot change status: request is already ${request.status}.`);
+        throw new ConvexError(`Cannot change status: request is already ${request.status}.`);
       }
     } else if (args.status === "returned") {
       if (!isOwner && !isAdmin) {
-        throw new Error("Forbidden: Only the tool owner or admin can mark a tool as returned.");
+        throw new ConvexError("Forbidden: Only the tool owner or admin can mark a tool as returned.");
       }
       if (request.status !== "approved") {
-        throw new Error("Only currently approved active loans can be marked as returned.");
+        throw new ConvexError("Only currently approved active loans can be marked as returned.");
       }
     }
 
@@ -190,14 +233,15 @@ export const updateStatus = mutation({
 
 // Borrower's view: "My requests"
 export const myRequests = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { clerkId: v.optional(v.string()) },
+  handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return [];
+    const effectiveClerkId = identity?.subject || args.clerkId;
+    if (!effectiveClerkId) return [];
 
     const requests = await ctx.db
       .query("borrowRequests")
-      .withIndex("by_borrowerClerkId", (q) => q.eq("borrowerClerkId", identity.subject))
+      .withIndex("by_borrowerClerkId", (q) => q.eq("borrowerClerkId", effectiveClerkId))
       .order("desc")
       .collect();
 
@@ -216,14 +260,15 @@ export const myRequests = query({
 
 // Tool owner's view: "Incoming requests"
 export const incomingRequests = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { clerkId: v.optional(v.string()) },
+  handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return [];
+    const effectiveClerkId = identity?.subject || args.clerkId;
+    if (!effectiveClerkId) return [];
 
     const requests = await ctx.db
       .query("borrowRequests")
-      .withIndex("by_ownerClerkId", (q) => q.eq("ownerClerkId", identity.subject))
+      .withIndex("by_ownerClerkId", (q) => q.eq("ownerClerkId", effectiveClerkId))
       .order("desc")
       .collect();
 
@@ -239,4 +284,28 @@ export const incomingRequests = query({
     );
   },
 });
+
+// Tool IDs currently requested (pending or approved) by the active borrower
+export const myActiveRequestedToolIds = query({
+  args: { clerkId: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    const effectiveClerkId = identity?.subject || args.clerkId;
+    if (!effectiveClerkId) return [];
+
+    const requests = await ctx.db
+      .query("borrowRequests")
+      .withIndex("by_borrowerClerkId", (q) => q.eq("borrowerClerkId", effectiveClerkId))
+      .filter((q) =>
+        q.or(
+          q.eq(q.field("status"), "pending"),
+          q.eq(q.field("status"), "approved")
+        )
+      )
+      .collect();
+
+    return requests.map((r) => r.toolId);
+  },
+});
+
 

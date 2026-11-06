@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   n8n:
     image: docker.n8n.io/n8nio/n8n:latest
@@ -7,6 +5,8 @@ services:
     restart: unless-stopped
     ports:
       - "5678:5678"
+    env_file:
+      - .env.local
     environment:
       - N8N_HOST=localhost
       - N8N_PORT=5678
@@ -16,9 +16,10 @@ services:
       - GENERIC_TIMEZONE=UTC
       - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
       - N8N_SECURE_COOKIE=false
-      - N8N_WEBHOOK_SECRET=${N8N_WEBHOOK_SECRET:-lendloop-secret-key-32chars-minimum!}
-      - N8N_API_KEY=${N8N_API_KEY:-lendloop-n8n-secret-api-key-2026}
-      - CONVEX_SITE_URL=${CONVEX_SITE_URL:-http://host.docker.internal:3000}
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - N8N_WEBHOOK_SECRET=${N8N_WEBHOOK_SECRET}
+      - N8N_API_KEY=${N8N_API_KEY}
+      - CONVEX_SITE_URL=${CONVEX_SITE_URL}
     volumes:
       - n8n_data:/home/node/.n8n
       - ./workflows:/workflows:ro
